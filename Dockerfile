@@ -1,0 +1,61 @@
+# Set the base image
+ARG ROS_DISTRO=humble
+
+# Use the official ROS desktop image
+FROM osrf/ros:$ROS_DISTRO-desktop
+
+# Arguments
+ARG USER_NAME=user
+ARG USER_PASSWORD
+ARG USER_UID=1000
+ARG USER_GID=1000
+
+# Create a user with USER_NAME and give sudo privileges
+RUN groupadd -g $USER_GID $USER_NAME && \
+    useradd -m -s /bin/bash -u $USER_UID -g $USER_GID $USER_NAME && \
+    usermod -aG dialout $USER_NAME && \
+    usermod -aG video $USER_NAME && \
+    if [ -n "$USER_PASSWORD" ]; then \
+        echo "$USER_NAME:$USER_PASSWORD" | chpasswd && \
+        echo "$USER_NAME ALL=(ALL) ALL" >> /etc/sudoers.d/$USER_NAME && \
+        chmod 0440 /etc/sudoers.d/$USER_NAME; \
+    else \
+        echo "$USER_NAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/$USER_NAME && \
+        chmod 0440 /etc/sudoers.d/$USER_NAME; \
+    fi
+
+# Install the required packages
+RUN apt-get update && apt-get install -y \
+    python3-pip \
+    nano
+
+# Copy the requirements.txt file
+COPY requirements.txt /tmp/requirements.txt
+
+# Install Python packages
+RUN pip3 install -r /tmp/requirements.txt
+
+# Set the user
+USER $USER_NAME
+
+# Set the working directory
+WORKDIR /home/$USER_NAME
+
+# Copy the ros_ws/src directory
+COPY --chown=$USER_NAME:$USER_NAME ros_ws/src /home/$USER_NAME/ros_ws/src
+
+# Build the package
+RUN /bin/bash -c "source /opt/ros/$ROS_DISTRO/setup.bash && \
+                  cd /home/$USER_NAME/ros_ws && \
+                  rosdep update && \
+                  rosdep install --from-paths src --ignore-src -r -y && \
+                  colcon build --symlink-install"
+
+# Set the environment variables
+RUN echo "\n# Set the environment variables" >> ~/.bashrc && \
+    echo "export PATH=/home/$USER_NAME/.local/bin:\$PATH" >> ~/.bashrc && \
+    echo "source /opt/ros/$ROS_DISTRO/setup.bash" >> ~/.bashrc && \
+    echo "source /home/$USER_NAME/ros_ws/install/local_setup.bash" >> ~/.bashrc
+
+# Set the entrypoint
+CMD ["/bin/bash"]
